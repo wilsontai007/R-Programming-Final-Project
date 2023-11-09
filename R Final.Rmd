@@ -1,0 +1,457 @@
+---
+title: "STAT40620: Data Programming with R - Final"
+author: "Wilson Tai 21204700"
+date: "22/12/2022"
+output:
+    html_document:
+        number_sections: TRUE
+        toc: true
+---
+# Introduction
+This dataset looks at the emotions and the number of tweets of 28 world events. These events include accidents, deaths and sport events but to name 3, and the emotions provided are Sarcasm, Irony and Humour. This dataset was sourced from the Loughborough University dataset website: https://repository.lboro.ac.uk/articles/dataset/Overview_of_the_25_Unique_Events_Topics/13084817 .
+
+The dataset is not big: as aforementioned, there are only 28 events (observations). In spite of this, I as able to derive some interesting results, although possibly bias due to such a small sample. Let's begin!
+
+# Cleaning
+Before I get into my first section of the instruction list, Analysis, I want to clean and set up the data appropriately first.
+```{R message = FALSE, warning = FALSE, results='hide'}
+Event <- read.csv("/Users/wilsontai/Downloads/overview_of_events_datasets (1).csv")
+attach(Event)
+
+##loading libraries
+library(stargazer)
+library(lmtest)
+library(sandwich)
+library(portes)
+library(Hmisc)
+library(PerformanceAnalytics)
+library(olsrr)
+library(plyr)
+library(car)
+library(ggcorrplot)
+```
+In the above, I am loading in my dataset and libraries required for this project. In the following, I am cleaning up some components of the data to allow an easy understanding for both the reader and I:
+
+```{R warning = FALSE, message = FALSE}
+##getting general overview
+head(Event)
+tail(Event)
+summary(Event)
+```
+
+```{R, warnings = FALSE, message = FALSE}
+str(Event) #lots of characters: they are quite awkward
+dim(Event) #28 rows/observations and 10 variables
+colSums(is.na(Event)) ##are there any NAs? No
+```
+The data has 28 observations and 10 variables in place. It also has only two type of variables, characters and integers, which will make our analysis a bit awkward, particularly the characters. I thus clean this up by turning characters into factors.
+
+```{R, warnings = FALSE, message = FALSE}
+##Re-naming columns more appropriately
+colnames(Event)[2] = 'Total_Tweets'
+colnames(Event)[3] = 'Emotional_Tweets'
+colnames(Event)[4] = 'Emotional_Tweets_Percentage'
+colnames(Event)[5] = 'Type'
+
+# Converting all 'character' variables to 'factor'
+Event <- as.data.frame(unclass(Event),         
+                       stringsAsFactors = TRUE)
+Event$Total_Tweets <- as.numeric(Event$Total_Tweets) ##setting as numeric rather than integer
+
+str(Event) ##Checking they are now factors
+head(Event) ##ensuring new column names are correct
+```
+As above. 
+
+# Analysis
+In this section, I will first implement some visuals to interpret our data. I will then construct a for-loop to look at the proportions, and then some regressions to infer my dependent variables of interest.
+
+## Data Visualisation
+### Boxplots
+As aforementioned, beginning with the visualisation of my data:
+```{R, warnings = FALSE, message = FALSE}
+par(mfrow = c(1,1))
+boxplot(Event$Emotional_Tweets, col = "blue", main = "Box Plot for Emotional Tweets Percentage")
+abline(h=quantile(Event$Emotional_Tweets,0.25), col="red", lty=2)
+abline(h=quantile(Event$Emotional_Tweets,0.75), col="red", lty=2)
+
+boxplot(Event$Total_Tweets, col = "blue", main = "Box Plot for Total Tweets")
+abline(h=quantile(Event$Total_Tweets,0.25), col="red", lty=2)
+abline(h=quantile(Event$Total_Tweets,0.75), col="red", lty=2)
+```
+
+I begin with boxplots, as it is quite robust to dataset of small sample sizes. We can see that two of the plots have pretty egregious outliers. Moreover, the first to third quantile don't have much of a gap. We can loosely say that they are clustered around the one area. 
+As with the minimum and maximum, it provides us a good spread which allow us to have a broader confidence interval to infer from.
+
+### Histograms
+Now looking at histograms:
+```{R warnings = FALSE, message = FALSE}
+par(mfrow = c(1,2))
+hist(Event$Emotional_Tweets, col = "blue", 
+     xlab = "Percentage of Emotional Tweets", main = "Histogram of Emotional Tweets")
+options(scipen=3)
+hist(Event$Total_Tweets, col = "blue", 
+     xlab = "Total Tweets per Event", main = "Histogram of Total Tweets",
+     ylim =c(0,20))
+```
+
+Rather than being normally distributed, we can see that the bar charts are skewed to the left. This implies that it should be quite rare for an event to have over x amount of emotional tweets and total tweets about the events: it is loosely speaking, bounded and thus again, loosely speaking, as aforementioned, "clustered around the one area".
+
+### Emotions 
+It is quite complex to look at the categorical variables (events) as there are too many levels. As a result, it would be difficult to infer from these graphs.
+
+However, I can turn the emotion variables into factors because they are essentially yes/no variables.
+In the following, I thus graph the emotion variables to see how often each feeling for events.
+```{R, warnings = FALSE, message = FALSE}
+#changing plot layout so all three graphs could fit on one plot
+par(mfrow = c(1,3))
+par(oma=c(0,0,4,0))
+
+##changing variables as factor to be able to graph it
+Event$Sarcasm <- as.factor(Event$Sarcasm)
+Event$Irony <- as.factor(Event$Irony)
+Event$Humour <- as.factor(Event$Humour)
+
+##graphing feelings
+plot(Event$Sarcasm, col = "blue", ylim = c(0,25), ylab = "Frequency",
+     main = "Sarcasm Frequency")
+plot(Event$Irony, col = "red", ylim = c(0,25), ylab = "Frequency",
+     main = "Irony Frequency")
+plot(Event$Humour, col = "orange", ylim = c(0,25), ylab = "Frequency",
+     main = "Humour Frequency")
+mtext(~bold("Number of Times per Event"), # Add main title
+      side = 3,
+      line = 0,
+      cex = 2,
+      outer = TRUE)
+##Setting back to original layout
+par(mfrow = c(1,1)) 
+par(oma=c(0,0,0,0))
+```
+We can see that when it comes to tweeting about events, it is more often than not that users tend to not use these feelings. There are two possible reasons to this: 1) we have more than three feelings and 2) the person who collected this data may found the feeling of the tweet a bit ambiguous and probably allocated it incorrectly. 
+Nevertheless, we have derived a glimpse of the distribution of feelings.
+
+## Proportion
+I now want to look at the proportion of each emotions: how much each emotions represent out of the total. To do this, I must get a total of them all first.
+```{R warning = FALSE, message = FALSE}
+##cumulative number of tweets regarding emotions
+emotion_total <- sum(Sarcasm) + sum(Irony) + sum(Humour) 
+```
+
+I then create a small for-loop to implement the sum. I then do a robustness check to ensure that my results are correct through a simple 'sum' function (for summation) and divide it by the total.
+```{R warning = FALSE, message = FALSE}
+
+proportion <- function(x){
+  sum<-0
+  for(i in 1:(length(x))){ ##beginning from first observation
+    sum=sum+x[i] ##using a loop to sum first obs with the 0, and then the next one, and so on
+  }
+  proportion = sum/emotion_total ##grab for loop results and find proportion
+  return(proportion)
+}
+proportion(Sarcasm)
+proportion(Irony)
+proportion(Humour)
+
+##ensuring my above are correct
+sum(Sarcasm)/emotion_total
+sum(Irony)/emotion_total
+sum(Humour)/emotion_total
+```
+
+Thus, we see humorous tweets account for the most, followed by sarcasm, and then irony. This makes sense, perhaps subjectively, as people tend to ordinal emotions with respect to time: people are more humorous than sarcastic, and more sarcastic to ironic.
+
+## Regression
+This section works through some regressions. 
+
+### Linear Regression
+I first implement a linear regression model and ask: can the quantity of emotional tweets predict the number of tweets of an event? I first create dummies for the three variables of feelings in order to make the regression work.
+```{R, warnings = FALSE, message = FALSE}
+##Creating Dummies to make Regression work
+Event$SarcasmDummy <- ifelse(Event$Sarcasm != 0, 1, 0)
+Event$IronyDummy <- ifelse(Event$Irony != 0, 1, 0)
+Event$HumourDummy <- ifelse(Event$Humour != 0, 1, 0)
+```
+
+I then ensure there is no multicollinearity for the variables I am using for my regression as this can create a higher standard error and thus deliver improper conclusions.
+```{R, warnings = FALSE, message = FALSE}
+##subsetting dataset to have a look at correlations: ensure no multicolliinearity
+EventNumeric <- dplyr::select_if(Event, is.numeric)
+head(EventNumeric) ##looking at top few observations to ensure everything is correct
+EventNumeric <- EventNumeric[,-2] ##can eliminate one of the emotional_tweets: pretty arbitary
+head(EventNumeric) ##ensuring it worked
+str(EventNumeric) ##checking structure
+dim(EventNumeric) ##dimensions
+
+rcorr(as.matrix(EventNumeric)) ##correlation matrix
+eventnumeric_cor <- cor(EventNumeric)
+ggcorrplot(eventnumeric_cor,
+           title = "Correlation Matrix",
+           lab = TRUE) ##correlation plot
+```
+
+As we can see, there is not a high correlation amongst the variables, ensuring multicollinearity will not be present. 
+
+We thus run the regression where we are trying to understand which variable has a significant effect on the percentage of emotional tweets:
+```{R, warnings = FALSE, message = FALSE}
+##Running Regression
+lm1 <- lm(Emotional_Tweets_Percentage ~ Total_Tweets + SarcasmDummy + 
+            IronyDummy + HumourDummy, Event)
+bptest(lm1) ##Heteroskedasticity test
+dwtest(lm1) ##autocorrelation test
+vif(lm1) ##all less than the rule of thumb of 5: multicollinearity not present
+summary(lm1) ##no interesting results: not statistically significant
+```
+We passed both heteroskedasticity and autocorrelation tests: these are not present as we have failed to reject the null for each. Variance Inflation Factor for multiocollinearity is less than 5: not present.
+(I noticed that the standard errors are astronomically high, despite passing my checks: I'm not sure what is going on).
+
+We also found nothing significant from the regression: there is no strong causation and ceterus paribus in our model and thus weakens our analysis. Again, this is more than likely due to a small sample size. 
+To avoid dissappointing the reader however, the following section, Paclage, will provide much more interesting results with respect to linear regression and emotional tweets percentage.
+
+### Poisson Regression
+Let's look for an alternative regression: the Poisson Regression, where the requirement is for our dependent variable to be a count variable. Thus, we will use Total_Tweets as our dependent variable, which was hinted in the prior when showing graphs. But first, as an unspoken rule for econometrics, we always use OLS first to get a possible overview:
+```{R, warnings = FALSE, message = FALSE}
+lm2 <- lm(Total_Tweets ~ Emotional_Tweets_Percentage +SarcasmDummy + 
+                  IronyDummy + HumourDummy, data = Event) ##linear regression
+poisson1 <- glm(Total_Tweets ~ Emotional_Tweets_Percentage +SarcasmDummy + 
+                  IronyDummy + HumourDummy, data = Event, family = "poisson") ##poisson regression
+stargazer(lm2, poisson1, 
+          title = "OLS vs Poisson",
+          dep.var.labels.include = FALSE,
+          dep.var.caption  = "Dependent Variable: Total Tweets",
+          type = "text")
+```
+For OLS, no independent variables are statistically significant. Perhaps because we are implying the wrong model. For Poisson, we thus see that all variables are statistically significant at the one percent level. 
+
+To interpret these coefficients, we say that given a 1% increase in emotional tweets, we can expect total tweets to fall by 7.1%, holding all else constant. Alternatively, if emotional tweets fall by 1%, total tweets increases by 7.1%. This may be due to the fact people want to avoid commotion and tweeting things that could get them in trouble. 
+
+Thus, rather than using descrpitive statistics to draw 'robust' conclusions, we have used inferential regressions for this instead, a pretty interesting one for that matter.
+
+# Package
+The package I have selected is 'lmtest'.
+
+The purpose of this package is used mainly for regression purposes. I don't know about the statistician, but we econometricians are particularly conscientious on the rules of our model. lmtest has aided me with some of these: in the previous section, I used bptest (Breusch-Pagan) to test for heteroskedasticity and dwtest for autocorrelation (In which I don't think base R has a function for any of these), and a few more I will show in this section.
+
+## RESET Test: reset()
+Let me run the first linear regression again, but I want to ensure the specification (loosely speaking - form) of my model is correct. I thus use a Ramsey RESET Test from this package.
+```{R, warnings = FALSE, message = FALSE}
+library(lmtest)
+reset(Emotional_Tweets_Percentage ~ Total_Tweets + SarcasmDummy + 
+        IronyDummy + HumourDummy, data = Event, power = 2:3)
+```
+Where the null says our model is not misspecified and the alternative says it is, but we don't know how ie what interaction terms or squares etc. We thus reject the null that our model is not misspecified. 
+
+Let's try it with Total_Tweets being squared (an inflection point for Total_Tweets):
+```{R, warnings = FALSE, message = FALSE}
+Total_Tweets2 <- Event$Total_Tweets^2
+reset(Emotional_Tweets_Percentage ~ Total_Tweets + Total_Tweets2 + SarcasmDummy + 
+        IronyDummy + HumourDummy, data = Event, power = 2:3)
+```
+
+Interesting. This is our ideal model according to this test. Let's run our regression now:
+```{R, warnings = FALSE, message = FALSE}
+lm1 <- lm(Emotional_Tweets_Percentage ~ Total_Tweets + Total_Tweets2 + SarcasmDummy + 
+            IronyDummy + HumourDummy, Event)
+summary(lm1)
+```
+We can now see Total_Tweets is statistically significant at the 5% level. However, the coefficient is quite small indicating low economic explanatory power. Nevertheless, we have showed that our previous specification was wrong and with the assist of the RESET Test, we have constructed a better model.
+
+## Autocorrelation: dwtest() and bgtest()
+Let's again test for autocorrelation with dwtest function from this package:
+```{R warnings = FALSE, message = FALSE}
+dwtest(lm1)
+```
+We fail to reject the null that autocorrelation is not present.
+
+And also with the Breusch-Godfrey test for serial correlation in the error terms:
+```{R warnings = FALSE, message = FALSE}
+bgtest(lm1)
+```
+Where we again, fail to reject null that autocorrelation is not present.
+
+## Heteroskedasticity: bptest() and Robust Standard Errors
+Now, testing heteroskedasticity with bptest function from the lmtest package.
+```{R, warnings = FALSE, message = FALSE}
+bptest(lm1)
+```
+
+Again, our residuals are homoskedastic. But let's assume our residuals are heteroskedastic (for the purpose of showcasing this function), which will imply our standard errors being wrong (more specifically, OLS overrejects null when we have heteroskedasticity) and thus interpretation of causal is not possible. We can use robust standard errors from the lmtest package which takes account of heteroskedastic residuals.
+```{R, warnings = FALSE, messages = FALSE}
+lm1robust <- coeftest(lm1, function(x) vcovHC(x, type="HC0"))
+lm1robust
+summary(lm1)
+stargazer(lm1, lm1robust, 
+          title = "OLS vs Robust Standard Errors",
+          dep.var.labels.include = FALSE,
+          column.labels=c("OLS","Robust Standard Errors"), 
+          dep.var.caption  = "Dependent Variable: Emotional Tweets Percentage",
+          type = "text", model.names = FALSE)
+```
+As a result, we can see that Total_Tweets^2 is now also significant, although with very, very low explanatory power. Furthermore, we can see that all the other standard errors has fallen but we are taking account of heteroskedasticity. 
+
+All in all, we economists use lmtest package a lot in order to avoid, or take account of the violations we have made.
+
+# Function
+For this section, we are required to create some functions, or S3 classes from what we learned in class. The requirements are to 'extend' print, summary and plot functions. I first turn my dataset into a list:
+```{R message = FALSE, warning = FALSE}
+attach(EventNumeric)
+EventNumeric <- as.list(EventNumeric) ##creating EventNumeric as 'list' just like was taught in class
+class(EventNumeric) <- "events"
+is.list(EventNumeric) ## did my list function really work?
+class(EventNumeric) ##ensuring it is now a list called 'events'
+str(EventNumeric)
+```
+
+## Print
+For my first function/S3 class, I am going to create a print function, which gives us a very, very, very broad overview of what we are calling, relative to summary function which provides us more information. 
+```{R message = FALSE, warning = FALSE}
+##Print
+print.events <- function(x){
+  return(t(do.call(rbind, x))) ##converting list into dataframe and then transposing it for easier view
+}
+print(EventNumeric)
+```
+Thus, by implementing a specific print function, we have derived a general overview of the list.
+
+## Summary
+Second S3 class, I am going to create a summary of my data. It is nothing grandiloquent: just giving an overview of my data at hand.
+
+```{R message = FALSE, warning = FALSE}
+##summary
+summary.events <- function(x){
+  print(length(x[[1]])) ##number of observations
+  ##function for mean, median, min, max, quantiles and range
+  multiple.func <- function(x) {
+    c(min = min(x), mean = mean(x), max = max(x), 
+      quantile = quantile(x, probs = c(0.25, 0.5, 0.75), range = max(x) - min(x))) 
+  }
+  x <- lapply(x, multiple.func) ##applying this to list
+  return(x) ##spitting results out
+}
+summary(EventNumeric)
+```
+
+As the results produce, I have successfully implemented an S3 class for this summary.
+
+## Plot
+My final one is for graphs, more specifically, a histogram of my two continuous variables because they are much more interesting than the binomial variables. 
+```{R message = FALSE, warning = FALSE}
+##plot
+plot.events <- function(EventNumeric){
+  par(mfrow = c(1,2)) #one row two columns
+  ##x and y axis titles are personalised, else my axis will look slightly indecorous 
+  hist(EventNumeric$Total_Tweets, xlab = "Total_Tweets", main =  "Total_Tweets", 
+       col = "blue", ylim = c(0,20)) 
+  hist(EventNumeric$Emotional_Tweets_Percentage, xlab = "Emotional Tweets (Percentage)", main = "Emotional Tweets",
+       col = "blue")
+  minmax <- function(x){
+    c(min = min(x), max = max(x), range = max(x) - min(x)) ##producing an overview of range
+  }
+  return(lapply(EventNumeric[1:2], minmax))
+}
+plot(EventNumeric)
+```
+
+I have also constructed a range element to give an overview of the range of the data, in case one might not be able to intepret the exact amount correctly.
+
+I have implement S3 classes as part of the project instructions. However, I may be naive when I say this, but it seems that S3 classes are only applicable for one dataset and thus not versatile (again, I may be naive). Moreover, the implemented S3 classes was not an "analysis of interest" to me. I therefore create functions that does interest me: regressions. 
+
+I want to showcase these functions because prior to beginning of the course, it would be an understatement to say that I was egregious at functions and if-else statements: I want to illustrate my progess.
+
+## Extension: Functions for the Economists' Regression
+### Gauss-Markov
+As aforementioned, we economists are quite conscientious in our models, particularly OLS. For OLS, we need our model to be 1) homoskedastic, 2) not serially correlated and 3) normally distributed. I create a quick and dirty function to display my results, and also visualise them. After all, we understand better through graphics.
+```{R message = FALSE, warning = FALSE}
+#######
+GaussMarkov <- function(y, ...){ ##y is dependent variable, '...' is one or more independent variables
+  x <- data.frame(...) ##creating a dataframe
+  lm <- lm(y ~ ., data = x) ##running regression
+  ehat <- lm$resid ##retrieving residuals, all the unexplained variables agglomerated into
+  yhat <- lm$fitted.values ##predicted values
+  print(bptest(lm)) ##heteroskedasticity test
+  print(dwtest(lm)) ##autocorrelation test (Durbin Watson)
+  print(bgtest(lm)) ##autocorrelation test (Breusch Godfrey)
+  print(ols_test_normality(ehat)) ##normality test
+  par(mfrow = c(2,2)) ##setting plot layout
+  plot(yhat, ehat, col = "blue",
+       main = "Heteroskedasticity and Normality Graph",
+       xlab = "Fitted Values", ylab = "Residuals") ##Heteroskedasticity and Normality Graph
+  acf(ehat, main = "Autocorrelation") ## Autocorrelation Graph
+  hist(ehat, xlab = "Residuals",
+       main = "Histogram of Residuals", col = "blue") ##histogram of reesiduals: should be normally distributed
+  plot(yhat, y, main= "Fitted vs Actual", 
+       xlab = "Fitted Values", ylab = "Actual",
+       pch = 19,
+       col = "blue")
+  abline(a = 0, b = 1,col='red') ##a plot of heteroskedasticity
+}
+GaussMarkov(Emotional_Tweets_Percentage, SarcasmDummy, Total_Tweets, IronyDummy, HumourDummy) ##testing it
+```
+
+The above comments explain clearly what the purpose is and so I want to avoid a tautology. As I said, the purpose is to test whether the Gauss-Markov Assumptions hold, not only through descriptive statistics, but also more robust approaches such as the Breusch Pagan and the Durbin Watson tests.
+
+### Best Model?
+I now ask whether we should use OLS, Poisson, or Robust Standard Errors OLS given certain conditions. Of course, there are more than these three models, but it would be a good overview given I have used them throughout this assignment. I create a function for this called 'best_model':
+```{R warning = FALSE, message = FALSE}
+best_model <- function(y,...){
+  x <- data.frame(...)
+  lm <- lm(y ~ ., data = x)
+  specify_decimal <- function(x, k) trimws(format(round(x, k), nsmall=k)) ##use function (more specifically the bptest function) to grab a number that is not considered a number when we use a function
+  BPpvalue <- specify_decimal(bptest(lm)$p.value, 5) ##creating object called BPvalue and rounding it to 5 decimal points
+  if(BPpvalue > 0.05){ ##heteroskedasticity test: we want to fail this test
+    print("Failed to reject null that model is homoskedastic")
+    print(paste0("Breusch Pagan P-Value is ", BPpvalue))  
+    pvalue <- as.data.frame(summary(lm)$coefficients[,4])[-1, ] 
+    ##getting p-values for significance from lm but remove intercept p-value: intercept is only there to make equation work
+    if(y %% 1 == 0){ ##count variables dont have remainders
+        poisson <- glm(y~., data = x, family = "poisson")
+        pvalue <- as.data.frame(summary(poisson)$coefficients[,4])[-1, ]
+   ##getting pvalues for significance from poisson but remove intercept p-value
+        if(pvalue < 0.05){
+          summary(poisson)}
+      }
+    else if (y %% 1 != 0 & pvalue < 0.05) {  ##OLS is versatile: try with OLS
+      ##also, this p-value follows the OLS one, not poisson, as its inside different statements
+      summary(lm) ##show this model (OLS)
+    }
+##But what if the above conditions dont hold? Then:
+    else {
+      print("No good model: OLS not significant and Dependent Variable is not count variable")
+    }
+  }
+##If BP > 0.05, so heteroskedasticity is present, then:
+  else{
+    print("Reject null that model is homoskedastic and correct with robust standard errors") #if we reject Breusch Pagan Test, then our model is heteroskedastic and we thus need a robust standard errors model
+    print(paste0("Breusch Pagan P-Value is ", BPpvalue))    
+    lmrobust <- coeftest(lm, function(x) vcovHC(x, type="HC0"))
+    print(lmrobust)
+  }
+}
+best_model(Total_Tweets, SarcasmDummy, Emotional_Tweets_Percentage, IronyDummy, HumourDummy) ##Poisson Example
+best_model(Emotional_Tweets_Percentage, SarcasmDummy, HumourDummy, IronyDummy, Total_Tweets) ##OLS/Insignificance example
+```
+
+As the above comments, I have many exploited if-else functions. I also tried to find a model that was statistically significant and for the continuos variable case as we saw in the Analysis section, this was not the case and thus no model was good enough. I was fortunately able to showcase choosing between OLS and Poisson, but not for heteroskedasticity example.
+
+Now, creating sample variables to showcase the heteroskedastic case:
+```{R warning = FALSE, message = FALSE}
+set.seed(123)
+n = 500
+x <- 1:n
+sd<-runif(n, min=0, max=5)
+error<-rnorm(n,0,sd*x) 
+y <- x+error
+plot(x,y, main = "Sample Heteroskedasticy", col = "blue")    
+  abline(0,1, col="red")
+best_model(y, x)
+```
+
+As we can see in the above graph, we have a non-constant variance, and our Breusch-Pagan Test shows it also. More importantly, my function has produced the correct result: to use robust standard errors rather than OLS as I am taking account of heteroskedastic errors.
+
+I will be honest, the above function is actually not too bad, but definitely room for advancement. For instance, I have not used for-while loops that could somehow improve it (I'm just not sure how yet!). 
+
+However, I could definitely advance this in 'Limited Dependent Variables' in econometrics that will hopefully allow me to compare and contrast econometric models (such as the Logit, Probit, Tobit, Heckamn, Average Treatment Effect amongst others that I could have used, but would probably more apt for another question of interest), but more sophisticated than this one.
+
+
+# Conclusion
+I have derived quite a lot from this small dataset: particularly from the regression models. Most importantly however, is that I learned how to implement functions very well due to this project (I was pretty egregious at them before!) which is quintessential in the world of computer and data science! 
